@@ -12,33 +12,40 @@ Prerequisites:
 """
 
 import argparse
+import os
 
 import torch
-from peft import AutoPeftModelForCausalLM, PeftModel
+from huggingface_hub import HfApi
+from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 BASE_MODEL = "Qwen/Qwen3-8B"
-ADAPTER_DIR = "./final_model"
+DEFAULT_ADAPTER_DIR = "./final_model"
 
 
-def upload_adapter(repo_id: str, private: bool = False):
-    """Push only the LoRA adapter weights (~200 MB)."""
-    print(f"Loading adapter from {ADAPTER_DIR} ...")
-    model = AutoPeftModelForCausalLM.from_pretrained(
-        ADAPTER_DIR,
-        torch_dtype=torch.bfloat16,
-        device_map="auto",
+def upload_adapter(repo_id: str, adapter_dir: str, private: bool = False):
+    """Push only the LoRA adapter weights (~200 MB) by uploading the folder directly."""
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        raise ValueError("HF_TOKEN environment variable is not set. Run: export HF_TOKEN=hf_...")
+    api = HfApi(token=token)
+    print(f"Creating repo {repo_id} ...")
+    api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
+
+    print(f"Uploading adapter folder {adapter_dir} → {repo_id} ...")
+    api.upload_folder(
+        folder_path=adapter_dir,
+        repo_id=repo_id,
+        repo_type="model",
     )
-    tokenizer = AutoTokenizer.from_pretrained(ADAPTER_DIR)
-
-    print(f"Pushing adapter to {repo_id} ...")
-    model.push_to_hub(repo_id, private=private)
-    tokenizer.push_to_hub(repo_id, private=private)
     print("Done — adapter uploaded.")
 
 
-def upload_merged(repo_id: str, private: bool = False):
+def upload_merged(repo_id: str, adapter_dir: str, private: bool = False):
     """Merge LoRA into the base model and push full weights (~16 GB)."""
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        raise ValueError("HF_TOKEN environment variable is not set. Run: export HF_TOKEN=hf_...")
     print(f"Loading base model {BASE_MODEL} ...")
     base_model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
@@ -46,15 +53,15 @@ def upload_merged(repo_id: str, private: bool = False):
         device_map="auto",
         trust_remote_code=True,
     )
-    print(f"Loading adapter from {ADAPTER_DIR} and merging ...")
-    model = PeftModel.from_pretrained(base_model, ADAPTER_DIR)
+    print(f"Loading adapter from {adapter_dir} and merging ...")
+    model = PeftModel.from_pretrained(base_model, adapter_dir)
     model = model.merge_and_unload()
 
-    tokenizer = AutoTokenizer.from_pretrained(ADAPTER_DIR)
+    tokenizer = AutoTokenizer.from_pretrained(adapter_dir)
 
     print(f"Pushing merged model to {repo_id} ...")
-    model.push_to_hub(repo_id, private=private)
-    tokenizer.push_to_hub(repo_id, private=private)
+    model.push_to_hub(repo_id, private=private, token=token)
+    tokenizer.push_to_hub(repo_id, private=private, token=token)
     print("Done — merged model uploaded.")
 
 
@@ -65,6 +72,12 @@ def main():
         type=str,
         required=True,
         help="HuggingFace repo id, e.g. your-username/Qwen3-8B-Herald-SFT",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default=DEFAULT_ADAPTER_DIR,
+        help="Path to the adapter/checkpoint directory (default: ./final_model)",
     )
     parser.add_argument(
         "--merge",
@@ -79,9 +92,9 @@ def main():
     args = parser.parse_args()
 
     if args.merge:
-        upload_merged(args.repo, private=args.private)
+        upload_merged(args.repo, adapter_dir=args.checkpoint, private=args.private)
     else:
-        upload_adapter(args.repo, private=args.private)
+        upload_adapter(args.repo, adapter_dir=args.checkpoint, private=args.private)
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ reinforcement learning with a Lean 4 compiler reward.
 pip install -r requirements.txt
 
 # Login to HuggingFace (for dataset download and model upload)
-huggingface-cli login
+hf auth login
 
 # (Optional) Login to Weights & Biases for logging
 wandb login
@@ -292,3 +292,6 @@ python upload.py --repo your-username/Qwen3-8B-Herald-GRPO --merge
   resume from step 8000, not restart.
 - The `packing=True` flag significantly speeds up SFT. Disable it only if
   you see training instability.
+
+
+

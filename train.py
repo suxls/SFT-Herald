@@ -16,8 +16,8 @@ from trl import SFTTrainer, SFTConfig
 # ──────────────────────────────────────────────
 dataset = load_dataset("FrenzyMath/Herald_statements", split="train")
 
-# Optional: use a subset for faster experimentation
-# dataset = dataset.shuffle(seed=42).select(range(50_000))
+# 50k shuffled subset — GRPO-ready SFT in ~10-12 hours
+dataset = dataset.shuffle(seed=42).select(range(50_000))
 
 # ──────────────────────────────────────────────
 # 2. System prompt & formatting
@@ -135,7 +135,9 @@ MODEL_NAME = "Qwen/Qwen3-8B"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
-
+tokenizer.model_max_length = 2048  # Set max sequence length
+tokenizer.truncation_side = "right"  # Truncate long sequences
+tokenizer.truncation_side = "right"  # Truncate from the right
 # ──────────────────────────────────────────────
 # 4. Quantization config (QLoRA — 4-bit)
 # ──────────────────────────────────────────────
@@ -153,7 +155,7 @@ model = AutoModelForCausalLM.from_pretrained(
     MODEL_NAME,
     quantization_config=bnb_config,
     device_map="auto",
-    torch_dtype=torch.bfloat16,
+    dtype=torch.bfloat16,
     trust_remote_code=True,
     attn_implementation="flash_attention_2",
 )
@@ -179,13 +181,13 @@ lora_config = LoraConfig(
 # ──────────────────────────────────────────────
 training_args = SFTConfig(
     output_dir="./results",
-    num_train_epochs=2,
-    per_device_train_batch_size=2,
-    gradient_accumulation_steps=8,
+    num_train_epochs=2,  # 2 epochs: critical for consistent format adherence
+    per_device_train_batch_size=2,  # batch_size=2 fits with flash_attention_2
+    gradient_accumulation_steps=8,  # effective batch size = 2 × 8 = 16
     gradient_checkpointing=True,
     learning_rate=2e-4,
     lr_scheduler_type="cosine",
-    warmup_ratio=0.05,
+    warmup_steps=500,
     weight_decay=0.01,
     bf16=True,
     logging_steps=25,
@@ -193,8 +195,8 @@ training_args = SFTConfig(
     save_steps=500,
     eval_strategy="steps",
     eval_steps=500,
-    max_seq_length=2048,
-    packing=True,
+    max_length=2048,  # TRL 0.28 uses max_length (not max_seq_length)
+    packing=True,  # Safe with flash_attention_2
     dataset_kwargs={"add_special_tokens": False},
     report_to="wandb",
     seed=42,
